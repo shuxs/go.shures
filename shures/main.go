@@ -82,12 +82,12 @@ func main() {
 	fmt.Println("是否依赖:", !noDependent)
 	fmt.Println("过滤条件:")
 	for _, exclude := range excludes {
-		fmt.Printf(`  %s`, exclude)
+		fmt.Printf("  %s\n", exclude)
 	}
 	fmt.Println("包含条件:")
 
 	for _, include := range includes {
-		fmt.Printf(`  %s`, include)
+		fmt.Printf("  %s\n", include)
 	}
 
 	var excludeRegs []*regexp.Regexp
