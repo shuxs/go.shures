@@ -11,11 +11,10 @@ import (
 	"strings"
 
 	"github.com/shuxs/go.shures/embed"
-	"github.com/shuxs/go.shures/res"
 	"github.com/spf13/pflag"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 func main() {
 	var (
@@ -30,8 +29,16 @@ func main() {
 	pflag.ErrHelp = errors.New("")
 
 	pflag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "%s [OPTIONS] filename/dirname\n\n%s\n\nOptions:\n%s\n",
-			os.Args[0],
+		name, _ := os.Executable()
+		_, name = filepath.Split(name)
+		_, _ = fmt.Fprintf(os.Stderr, `%s [OPTIONS] filename/dirname
+
+%s
+
+Options:
+%s
+`,
+			name,
 			"Embed files into a Go executable",
 			pflag.CommandLine.FlagUsages())
 	}
@@ -39,9 +46,9 @@ func main() {
 	pflag.StringVarP(&pkg, "pkg", "p", "", "包名")
 	pflag.StringVar(&varName, "var", "", "变量名")
 	pflag.StringVarP(&out, "out", "o", "", "保存文件")
-	pflag.StringSliceVarP(&excludes, "exclude", "e", nil, "排除(正则表达式)")
-	pflag.StringSliceVarP(&includes, "include", "i", nil, "包含(正则表达式)")
-	pflag.BoolVar(&noDependent, "no-dependent", false, "是否无依赖(github.com/shuxs/go.shures/res)")
+	pflag.StringArrayVarP(&excludes, "exclude", "e", nil, "排除(正则表达式)")
+	pflag.StringArrayVarP(&includes, "include", "i", nil, "包含(正则表达式)")
+	pflag.BoolVar(&noDependent, "no-dep", false, "是否无依赖(github.com/shuxs/go.shures/res)")
 	pflag.BoolVarP(&v, "version", "V", false, "版本号")
 	pflag.BoolVarP(&help, "help", "h", false, "打印使用方法")
 	pflag.Parse()
@@ -76,53 +83,64 @@ func main() {
 	}
 
 	fmt.Println("嵌入目录:", dir)
-	fmt.Println("指定包名:", pkg)
-	fmt.Println("资源变量:", varName)
-	fmt.Println("输出文件:", out)
-	fmt.Println("是否依赖:", !noDependent)
-	fmt.Println("过滤条件:")
-	for _, exclude := range excludes {
-		fmt.Printf("  %s\n", exclude)
+	if pkg != "" {
+		fmt.Println("指定包名:", pkg)
 	}
-	fmt.Println("包含条件:")
-
-	for _, include := range includes {
-		fmt.Printf("  %s\n", include)
+	if varName != "" {
+		fmt.Println("资源变量:", varName)
 	}
-
-	var excludeRegs []*regexp.Regexp
-	for _, exclude := range excludes {
-		r, err := regexp.Compile(exclude)
-		if err != nil {
-			log.Fatal(err)
-		}
-		excludeRegs = append(excludeRegs, r)
+	if out != "" {
+		fmt.Println("输出文件:", out)
+	}
+	if noDependent {
+		fmt.Println("外部依赖: 否")
 	}
 
 	var includeRegs []*regexp.Regexp
-	for _, include := range includes {
-		r, err := regexp.Compile(include)
-		if err != nil {
-			log.Fatal(err)
+	var excludeRegs []*regexp.Regexp
+
+	if len(includes) > 0 {
+		fmt.Println("包含条件:")
+		for _, include := range includes {
+			fmt.Printf("  %s\n", include)
+			r, err := regexp.Compile(include)
+			if err != nil {
+				log.Fatal(err)
+			}
+			includeRegs = append(includeRegs, r)
 		}
-		includeRegs = append(includeRegs, r)
 	}
 
-	f := func(f *res.File) bool {
+	if len(excludes) > 0 {
+		fmt.Println("过滤条件:")
+		for _, exclude := range excludes {
+			fmt.Printf("  %s\n", exclude)
+			r, err := regexp.Compile(exclude)
+			if err != nil {
+				log.Fatal(err)
+			}
+			excludeRegs = append(excludeRegs, r)
+		}
+	}
+
+	filter := func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		for _, r := range includeRegs {
-			if r.MatchString(f.Path) {
-				return true
+			if r.MatchString(path) {
+				return nil
 			}
 		}
 		for _, r := range excludeRegs {
-			if r.MatchString(f.Path) {
-				return false
+			if r.MatchString(path) {
+				return filepath.SkipDir
 			}
 		}
-		return true
+		return nil
 	}
 
-	if err := embed.Process(dir, pkg, varName, out, f, noDependent); err != nil {
+	if err := embed.Process(dir, pkg, varName, out, filter, noDependent); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -5,21 +5,22 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/template"
 
 	"github.com/shuxs/go.shures/res"
+
 	"golang.org/x/tools/imports"
 )
 
 type Filter func(f *res.File) bool
 
-func Process(dir, pkg, varName string, out string, filter Filter, noDependent bool) (err error) {
+func Process(dir, pkg, varName string, out string, filter filepath.WalkFunc, noDependent bool) (err error) {
 	defer func() {
 		if rev := recover(); rev != nil {
 			if _, ok := rev.(error); ok {
@@ -35,16 +36,25 @@ func Process(dir, pkg, varName string, out string, filter Filter, noDependent bo
 		t = template.Must(template.New("").Parse(templateDependenceRes))
 	}
 
-	dirs, files, err := GetFiles(dir, filter, 5)
+	dirs, files, err := getFiles(dir, filter, 5)
 	if err != nil {
 		return err
 	}
 
+	typePrefix := strings.ToLower(varName[:1]) + varName[1:]
 	data := map[string]interface{}{
-		"pkg":   pkg,
-		"var":   varName,
-		"dirs":  dirs,
-		"files": files,
+		"Package": pkg,
+		"Name":    varName,
+		"Folders": dirs,
+		"FileMap": files,
+
+		"VarDirs":      fmt.Sprintf("%sDirs", typePrefix),
+		"VarFiles":     fmt.Sprintf("%sFiles", typePrefix),
+		"FSType":       fmt.Sprintf("%sFS", typePrefix),
+		"FileType":     fmt.Sprintf("%sFile", typePrefix),
+		"HttpFileType": fmt.Sprintf("%sHttpFile", typePrefix),
+		"FileMapType":  fmt.Sprintf("%sFileMap", typePrefix),
+		"DirMapType":   fmt.Sprintf("%sDirMap", typePrefix),
 	}
 
 	w := &bytes.Buffer{}
@@ -68,74 +78,107 @@ func Process(dir, pkg, varName string, out string, filter Filter, noDependent bo
 	return nil
 }
 
-func GetFiles(path string, filter Filter, maxDepth int) ([]*res.File, map[string][]*res.File, error) {
-	var (
-		dirs  = make([]*res.File, 0, 20)
-		files = make(map[string][]*res.File, 100)
-		err   = fill(path, path, &dirs, &files, filter, 0, maxDepth)
-	)
-	return dirs, files, err
-}
-
-func fill(prefix, path string, dirs *[]*res.File, files *map[string][]*res.File, filter Filter, depth, maxDepth int) error {
-	if maxDepth > 1 && depth >= maxDepth {
-		return nil
-	}
-
-	fi, err := os.Lstat(path)
+func getFiles(root string, filter filepath.WalkFunc, maxDepth int) ([]*res.File, map[string][]*res.File, error) {
+	root, err := filepath.Abs(filepath.FromSlash(root))
 	if err != nil {
-		return err
-	}
-	pathName := filepath.ToSlash(path[len(prefix):])
-	if pathName == "" {
-		pathName = "/"
-	}
-	f := &res.File{
-		Path:        pathName,
-		FileName:    fi.Name(),
-		FileIsDir:   fi.IsDir(),
-		FileSize:    int(fi.Size()),
-		FileModTime: fi.ModTime().Unix(),
+		return nil, nil, err
 	}
 
-	if f.Path == "/" {
-		f.FileName = ""
+	var (
+		dirs  = make([]*res.File, 0)
+		files = make(map[string][]*res.File)
+	)
+
+	//判断传入路径是文件夹还是文件
+	stat, err := os.Stat(root)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	if filter != nil && !filter(f) {
-		return nil
+	//如果是文件直接返回
+	if !stat.IsDir() {
+		data, err := ioutil.ReadFile(root)
+		if err != nil {
+			return nil, nil, fmt.Errorf("readAll return err: %w", err)
+		}
+
+		dirs = []*res.File{{
+			Path:      "/",
+			FileIsDir: true,
+		}}
+
+		name := stat.Name()
+		files["/"] = []*res.File{{
+			Path:        "/" + name,
+			Compressed:  encode(data),
+			FileName:    name,
+			FileIsDir:   false,
+			FileSize:    int(stat.Size()),
+			FileModTime: stat.ModTime().Unix(),
+		}}
+		return dirs, files, nil
 	}
 
-	if f.FileIsDir {
-		*dirs = append(*dirs, f)
-		osf, err := os.Open(path)
+	//文件夹，遍历
+	err = filepath.Walk(root, func(path string, info os.FileInfo, ex error) error {
+		if ex != nil {
+			return ex
+		}
+
+		//计算相对路径
+		relPath, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		names, err := osf.Readdirnames(-1)
-		if err != nil {
+
+		if relPath == "" || relPath == "." {
+			relPath = ""
+		}
+
+		//应用过滤器
+		if err := filter(relPath, info, err); err != nil {
 			return err
 		}
-		for _, name := range names {
-			childPath := filepath.Join(path, name)
-			if err := fill(prefix, childPath, dirs, files, filter, depth+1, maxDepth); err != nil {
-				return err
+
+		//计算深度
+		if maxDepth > 0 && info.IsDir() {
+			if depth := strings.Count(strings.Trim(relPath, string(filepath.Separator)), string(filepath.Separator)); depth > maxDepth {
+				return filepath.SkipDir
 			}
 		}
+
+		//资源文件对象
+		rFile := &res.File{
+			Path:        "/" + filepath.ToSlash(relPath), //路径格式归一
+			FileName:    info.Name(),
+			FileIsDir:   info.IsDir(),
+			FileSize:    int(info.Size()),
+			FileModTime: info.ModTime().Unix(),
+		}
+
+		if rFile.Path == "/" {
+			rFile.FileName = ""
+		}
+
+		//如果是文件夹，处理完毕
+		if rFile.FileIsDir {
+			dirs = append(dirs, rFile)
+			return nil
+		}
+
+		//是文件，读取，编码
+		data, err := ioutil.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("readAll return err: %w", err)
+		}
+		rFile.Compressed = encode(data)
+
+		d := filepath.Dir(rFile.Path)
+		files[d] = append(files[d], rFile)
 		return nil
-	}
+	})
 
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("readAll return err: %w", err)
-	}
-	f.Compressed = encode(data)
-
-	d := filepath.Dir(pathName)
-	fs := append((*files)[d], f)
-	sort.Slice((*files)[d], func(i, j int) bool { return strings.Compare(fs[i].FileName, fs[j].FileName) == -1 })
-	(*files)[d] = fs
-	return nil
+	return dirs, files, err
 }
 
 func encode(data []byte) string {
@@ -152,7 +195,7 @@ func gzipCompress(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gzw.Close()
+	defer doClose(gzw)
 	if _, err = gzw.Write(data); err != nil {
 		return nil, err
 	}
@@ -173,10 +216,18 @@ func chunkBase64Encode(data []byte, chunkSize int) string {
 
 	chunk := make([]byte, chunkSize)
 	r := bytes.NewReader(v)
-	for n, _ := r.Read(chunk); n > 0; n, _ = r.Read(chunk) {
+	for {
+		n, _ := r.Read(chunk)
+		if n == 0 {
+			break
+		}
 		w.Write(chunk[:n])
 		w.WriteRune('\n')
 	}
 
 	return w.String()
+}
+
+func doClose(closer io.Closer) {
+	_ = closer.Close()
 }

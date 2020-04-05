@@ -18,14 +18,14 @@ shures [OPTIONS] filename/dirname
 Embed files into a Go executable
 
 Options:
-  -p, --pkg string        包名
-      --var string        变量名
-  -o, --out string        保存文件
-  -e, --exclude strings   排除(正则表达式)
-  -i, --include strings   包含(正则表达式)
-      --no-dependent      是否无依赖(github.com/shuxs/go.shures/res)
-  -V, --version           版本号
-  -h, --help              打印使用方法
+  -p, --pkg string            包名
+      --var string            变量名
+  -o, --out string            保存文件
+  -e, --exclude stringArray   排除(正则表达式)
+  -i, --include stringArray   包含(正则表达式)
+      --no-dep                是否无依赖(github.com/shuxs/go.shures/res)
+  -V, --version               版本号
+  -h, --help                  打印使用方法
 ```
 
 ## example #1
