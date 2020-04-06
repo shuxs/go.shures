@@ -489,7 +489,7 @@ func (f *{{ .Option.ResourceType }}) Open(path string) (http.File, error) {
 {{- else -}}
 
 import (
-    "go.shu.run/go.shures/res"
+    "github.com/shuxs/go.shures/res"
 )
 
 {{- end }}
