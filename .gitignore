@@ -13,3 +13,5 @@
 
 bin/
 go.sum
+
+.idea/

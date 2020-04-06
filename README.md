@@ -13,19 +13,21 @@ go get -u -v github.com/shuxs/go.shures/shures
 
 ```shell script
 $ shures --help
+shures v1.0.0, build with go1.14.1
 shures [OPTIONS] filename/dirname
 
 Embed files into a Go executable
 
 Options:
-  -p, --pkg string            包名
-      --var string            变量名
-  -o, --out string            保存文件
-  -e, --exclude stringArray   排除(正则表达式)
-  -i, --include stringArray   包含(正则表达式)
-      --no-dep                是否无依赖(github.com/shuxs/go.shures/res)
-  -V, --version               版本号
-  -h, --help                  打印使用方法
+      --pkg string          输出的包名
+      --name string         输出的变量名称
+      --no-dep              是否生成不带依赖资源代码 (不需要 import github.com/shuxs/go.shures/res)
+  -o, --out string          输出文件路径
+  -f, --force               是否覆盖目标文件
+  -m, --match stringArray   筛选(正则表达式)
+  -d, --debug               调试模式
+  -h, --help                打印使用方法
+
 ```
 
 ## example #1
